@@ -57,7 +57,6 @@ class Submesh {
         let lastComponent = String(property.stringValue?.split(separator: "/").last ?? "")
         texture = try? textureLoader.newTexture(name: lastComponent, scaleFactor: 1.0, bundle: Bundle.main, options: options)
         if let texture {
-          print("\(lastComponent) successful")
           return texture
         }
         // the texture is missing

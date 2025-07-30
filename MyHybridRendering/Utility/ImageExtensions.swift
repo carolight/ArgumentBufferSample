@@ -12,7 +12,9 @@ import MetalKit
 
 extension String {
   func createCGImageFromFile() throws -> CGImage {
-    let url = URL(fileURLWithPath: self)
+    guard let url = Bundle.main.url(forResource: self, withExtension: nil) else {
+      throw NSError(domain: "File not found in bundle", code: 0, userInfo: [NSLocalizedDescriptionKey: "Could not find file: \(self)"])
+    }
     
     let options: [CFString: Any] = [
       kCGImageSourceShouldCache: false,
