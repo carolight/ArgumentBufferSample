@@ -9,7 +9,7 @@ import SwiftUI
 
 @main
 struct MyHybridRenderingApp: App {
-    var body: some Scene {
+  var body: some SwiftUI.Scene {
         WindowGroup {
             ContentView()
         }

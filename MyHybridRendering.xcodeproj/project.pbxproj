@@ -11,7 +11,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		820299C82E398CE700948F00 /* MyHybridRendering */ = {
+		82029A032E3996D600948F00 /* MyHybridRendering */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = MyHybridRendering;
 			sourceTree = "<group>";
@@ -32,7 +32,7 @@
 		820299BD2E398CE700948F00 = {
 			isa = PBXGroup;
 			children = (
-				820299C82E398CE700948F00 /* MyHybridRendering */,
+				82029A032E3996D600948F00 /* MyHybridRendering */,
 				820299C72E398CE700948F00 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -61,7 +61,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				820299C82E398CE700948F00 /* MyHybridRendering */,
+				82029A032E3996D600948F00 /* MyHybridRendering */,
 			);
 			name = MyHybridRendering;
 			packageProductDependencies = (
@@ -278,6 +278,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = MyHybridRendering/Shaders/Common.h;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -322,6 +323,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = MyHybridRendering/Shaders/Common.h;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
