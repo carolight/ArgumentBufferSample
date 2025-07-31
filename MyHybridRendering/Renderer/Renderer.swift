@@ -11,6 +11,10 @@ let kMaxBuffersInFlight = 3
 let kMaxModelInstances = 4
 let alignedInstanceTransformSize = (MemoryLayout<InstanceTransform>.size & ~0xFF) + 0x100
 
+struct ThinGBuffer {
+  let positionTexture: MTLTexture
+  let directionTexture: MTLTexture
+}
 
 class Renderer: NSObject {
   let device: MTLDevice
@@ -29,6 +33,10 @@ class Renderer: NSObject {
   let cameraDataBuffers: [MTLBuffer]
   let instanceTransformBuffer: MTLBuffer
   let lightDataBuffer: MTLBuffer
+  
+  var rawColorMap: MTLTexture?
+  var bloomThresholdMap: MTLTexture?
+  var bloomBlurMap: MTLTexture?
 
   var projectionMatrix: matrix_float4x4 = .identity
   let inFlightSemaphore = DispatchSemaphore(value: kMaxBuffersInFlight)
@@ -48,11 +56,15 @@ class Renderer: NSObject {
   var meshes: [Mesh] = []  // the entire scene
   var skybox: Mesh!
   var skyMap: MTLTexture!
+  
+  var thinGBuffer: ThinGBuffer?
 
   var sceneArgumentBuffer: MTLBuffer!
   var sceneResidencySet: MTLResidencySet!
   var sceneResources: [MTLResource] = []
   var sceneHeaps: [MTLHeap] = []
+  
+  var instanceArgumentBuffer: MTLBuffer!
   
   init(view: MTKView) {
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -61,6 +73,9 @@ class Renderer: NSObject {
     }
     self.device = device
     self.commandQueue = commandQueue
+    view.depthStencilPixelFormat = .depth32Float_stencil8
+    view.colorPixelFormat = .bgra8Unorm_srgb
+
     modelInstances = ModelInstance.configureModelInstances(count: kMaxModelInstances)
 
     let builder = RendererBuilder(device: device, view: view)
@@ -77,6 +92,7 @@ class Renderer: NSObject {
     cameraDataBuffers = components.cameraDataBuffers
     instanceTransformBuffer = components.instanceTransformBuffer
     lightDataBuffer = components.lightDataBuffer
+    
     
     super.init()
 
@@ -200,13 +216,13 @@ class Renderer: NSObject {
   
   func buildSceneArgumentsBuffer() {
     let instanceArgumentSize = MemoryLayout<InstanceData>.stride * kMaxModelInstances
-    let instanceArgumentbuffer = newBuffer(
+    instanceArgumentBuffer = newBuffer(
       label: "instanceArgumentBuffer",
       length: instanceArgumentSize,
       options: .storageModeShared)
     
     // encode the instances array in `SceneData`
-    var instancePtr = instanceArgumentbuffer.contents()
+    var instancePtr = instanceArgumentBuffer.contents()
       .assumingMemoryBound(to: InstanceData.self)
     for index in 0..<kMaxModelInstances {
       instancePtr.pointee.meshIndex = UInt32(modelInstances[index].meshIndex)
@@ -280,8 +296,9 @@ class Renderer: NSObject {
     
     let scenePtr = sceneArgumentBuffer.contents()
       .assumingMemoryBound(to: SceneData.self)
-    scenePtr.pointee.instances = instanceArgumentbuffer.gpuAddress
+    scenePtr.pointee.instances = instanceArgumentBuffer.gpuAddress
     scenePtr.pointee.meshes = meshArgumentbuffer.gpuAddress
+    
     self.sceneArgumentBuffer = sceneArgumentBuffer
   }
   
@@ -324,10 +341,168 @@ class Renderer: NSObject {
 extension Renderer: MTKViewDelegate {
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
     projectionMatrix = projectionMatrix(aspect: Float(size.width / size.height))
+    
+    guard size != .zero else { return }
+    let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .rg11b10Float,
+      width: Int(size.width),
+      height: Int(size.height),
+      mipmapped: true)
+    textureDescriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+    textureDescriptor.mipmapLevelCount = 1
+    rawColorMap = device.makeTexture(descriptor: textureDescriptor)
+    bloomThresholdMap = device.makeTexture(descriptor: textureDescriptor)
+    bloomBlurMap = device.makeTexture(descriptor: textureDescriptor)
+    
+    textureDescriptor.pixelFormat = .rgba16Float
+    textureDescriptor.usage = [.shaderRead, .renderTarget]
+    textureDescriptor.mipmapLevelCount = 1
+    
+    let positionTexture = device.makeTexture(descriptor: textureDescriptor)!
+    let directionTexture = device.makeTexture(descriptor: textureDescriptor)!
+    thinGBuffer = ThinGBuffer(
+      positionTexture: positionTexture,
+      directionTexture: directionTexture)
+  }
+  
+  func encodeSceneRendering(_ renderEncoder: MTLRenderCommandEncoder) {
+    for index in 0..<kMaxModelInstances {
+      let mesh = meshes[modelInstances[index].meshIndex]
+      let mtkMesh = mesh.mtkMesh
+      
+      // set the mesh's vertex buffers
+      for bufferIndex in 0..<mtkMesh.vertexBuffers.count {
+        let vertexBuffer = mtkMesh.vertexBuffers[bufferIndex]
+          renderEncoder.setVertexBuffer(
+            vertexBuffer.buffer,
+            offset: vertexBuffer.offset,
+            index: bufferIndex)
+      }
+      
+      // draw each submesh of the mesh
+      for submeshIndex in 0..<mtkMesh.submeshes.count {
+        let submesh = mesh.submeshes[submeshIndex]
+        
+        // Access textures directly from the argument buffer and avoid rebinding
+        // them individually
+        // `SubmeshKeypath` provides the path to the argument buffer containing
+        // the texture data for this submesh. The shader navigates the scene
+        // argument buffer using this key to find the textures
+        
+        var submeshKeypath = SubmeshKeypath(
+          instanceID: UInt32(index),
+          submeshID: UInt32(submeshIndex))
+        let mtkSubmesh = submesh.mtkSubmesh
+        renderEncoder.setVertexBuffer(
+          instanceTransformBuffer,
+          offset: alignedInstanceTransformSize,
+          index: BufferIndexInstanceTransforms.index)
+        renderEncoder.setVertexBuffer(
+          cameraDataBuffers[cameraBufferIndex],
+          offset: 0,
+          index: BufferIndexCameraData.index)
+        renderEncoder.setFragmentBuffer(
+          cameraDataBuffers[cameraBufferIndex],
+          offset: 0,
+          index: BufferIndexCameraData.index)
+        renderEncoder.setFragmentBuffer(
+          lightDataBuffer,
+          offset: 0,
+          index: BufferIndexLightData.index)
+        
+        // Bind the scene and provide the keypath to retrieve this submesh's data
+        renderEncoder.setFragmentBuffer(
+          sceneArgumentBuffer,
+          offset: 0,
+          index: Int(SceneIndex.rawValue))
+        renderEncoder.setFragmentBytes(
+          &submeshKeypath,
+          length: MemoryLayout<SubmeshKeypath>.stride,
+          index: BufferIndexSubmeshKeypath.index)
+        
+        renderEncoder.drawIndexedPrimitives(
+          type: mtkSubmesh.primitiveType,
+          indexCount: mtkSubmesh.indexCount,
+          indexType: mtkSubmesh.indexType,
+          indexBuffer: mtkSubmesh.indexBuffer.buffer,
+          indexBufferOffset: mtkSubmesh.indexBuffer.offset)
+      }
+    }
   }
   
   func draw(in view: MTKView) {
+    inFlightSemaphore.wait()
     
+    guard let commandBuffer = commandQueue.makeCommandBuffer(),
+    let renderPassDescriptor = view.currentRenderPassDescriptor,
+    let drawableTexture = renderPassDescriptor.colorAttachments[0].texture
+      else { return }
+    commandBuffer.label = "Render Commands"
+    commandBuffer.addCompletedHandler { _ in
+      self.inFlightSemaphore.signal()
+    }
+    
+    updateCameraState()
+    
+    // Encode the forward pass
+    renderPassDescriptor.colorAttachments[0].texture = rawColorMap
+    
+    commandBuffer.pushDebugGroup("Forward Scene Render")
+//    commandBuffer.useResidencySet(sceneResidencySet)
+    
+    guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else { return }
+    renderEncoder.label = "ForwardPassRenderEncoder"
+    renderEncoder.setRenderPipelineState(pipelineState)
+    renderEncoder.setCullMode(.front)
+    renderEncoder.setFrontFacing(.clockwise)
+    renderEncoder.setDepthStencilState(depthState)
+    renderEncoder.setFragmentTexture(skyMap, index: SkyDomeTexture.index)
+    
+    encodeSceneRendering(renderEncoder)
+    
+    // encode the skybox rendering
+    
+    renderEncoder.setCullMode(.back)
+    renderEncoder.setRenderPipelineState(skyboxPipelineState)
+    
+    renderEncoder.setVertexBuffer(
+      cameraDataBuffers[cameraBufferIndex],
+      offset: 0,
+      index: BufferIndexCameraData.index)
+    
+    renderEncoder.setFragmentTexture(skyMap, index: 0)
+  
+    let mtkMesh = skybox.mtkMesh
+    for bufferindex in 0..<mtkMesh.vertexBuffers.count {
+      let vertexBuffer = mtkMesh.vertexBuffers[bufferindex]
+      renderEncoder.setVertexBuffer(
+        vertexBuffer.buffer,
+        offset: vertexBuffer.offset,
+        index: bufferindex)
+    }
+    
+    for submesh in mtkMesh.submeshes {
+      renderEncoder.drawIndexedPrimitives(
+        type: submesh.primitiveType,
+        indexCount: submesh.indexCount,
+        indexType: submesh.indexType,
+        indexBuffer: submesh.indexBuffer.buffer,
+        indexBufferOffset: submesh.indexBuffer.offset)
+    }
+    renderEncoder.endEncoding()
+    commandBuffer.popDebugGroup()
+   
+    if let drawable = view.currentDrawable {
+      commandBuffer.present(drawable)
+    }
+    commandBuffer.commit()
+    
+    
+    
+    
+    
+    
+  
   }
   
   

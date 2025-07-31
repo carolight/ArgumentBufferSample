@@ -89,8 +89,10 @@ struct InstanceData
 struct SceneData
 {
   // The array of instances.
-  uint64_t instances [[ id(ArgumentBufferIDSceneInstances ) ]];
-  uint64_t meshes [[ id(ArgumentBufferIDSceneMeshes )]];
+//  uint64_t instances [[ id(ArgumentBufferIDSceneInstances ) ]];
+//  uint64_t meshes [[ id(ArgumentBufferIDSceneMeshes )]];
+  constant InstanceData* instances [[ id(ArgumentBufferIDSceneInstances)]];
+  constant MeshData* meshes [[ id(ArgumentBufferIDSceneMeshes)]];
 };
 
 #else
