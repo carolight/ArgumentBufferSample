@@ -14,10 +14,10 @@ typedef enum {
   RoughnessTexture = 2,
   NormalTexture = 3,
   AOTexture = 4,
+  MaterialTextureCount = AOTexture + 1,
   IrradianceMap = 5,
   Reflections = 6,
-  SkyDomeTexture = 7,
-  MaterialTextureCount = AOTexture + 1
+  SkyDomeTexture = 7
 } TextureIndices;
 
 typedef enum {
@@ -74,7 +74,7 @@ struct MeshData
   constant MeshGenericsData* generics   [[ id(ArgumentBufferIDMeshGenerics  ) ]];
   
   // The array of submeshes.
-  uint64_t submeshes       [[ id(ArgumentBufferIDMeshSubmeshes ) ]];
+  constant SubmeshData* submeshes       [[ id(ArgumentBufferIDMeshSubmeshes ) ]];
 };
 
 struct InstanceData
@@ -89,8 +89,6 @@ struct InstanceData
 struct SceneData
 {
   // The array of instances.
-//  uint64_t instances [[ id(ArgumentBufferIDSceneInstances ) ]];
-//  uint64_t meshes [[ id(ArgumentBufferIDSceneMeshes )]];
   constant InstanceData* instances [[ id(ArgumentBufferIDSceneInstances)]];
   constant MeshData* meshes [[ id(ArgumentBufferIDSceneMeshes)]];
 };
@@ -110,8 +108,7 @@ struct SubmeshData
   uint64_t indices;
   
   // The fixed size array of material textures.
-//  MTLResourceID materials[MaterialTextureCount];
-  MTLResourceID materials[5];
+  MTLResourceID materials[MaterialTextureCount];
 };
 
 struct MeshData

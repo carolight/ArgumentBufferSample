@@ -259,21 +259,23 @@ fragment float4 fragmentShader(
                     constant SceneData*             pScene                [[ buffer(SceneIndex)]],
                     texture2d<float>            skydomeMap            [[ texture(SkyDomeTexture) ]])
 {
-    constexpr sampler colorSampler(mip_filter::linear,
-                                   mag_filter::linear,
-                                   min_filter::linear);
-
-    float2 screenTexcoord = calculateScreenCoord( in.ndcpos );
+//    constexpr sampler colorSampler(mip_filter::linear,
+//                                   mag_filter::linear,
+//                                   min_filter::linear);
+//
+//    float2 screenTexcoord = calculateScreenCoord( in.ndcpos );
     
-    constant InstanceData *instancesArray = (constant InstanceData*)pScene->instances;
-  uint32_t meshIndex = instancesArray[submeshKeypath.instanceID].meshIndex;
-  constant MeshData* meshesArray = (constant MeshData*)pScene->meshes;
-  constant MeshData& mesh = meshesArray[meshIndex];
-  constant SubmeshData* submeshesArray = (constant SubmeshData*) mesh.submeshes;
-  constant SubmeshData& submesh = submeshesArray[submeshKeypath.submeshID];
-//    constant MeshData* pMesh = &(pScene->meshes[ pScene->instances[submeshKeypath.instanceID].meshIndex]);
-//    constant SubmeshData* pSubmesh = &(pMesh->submeshes[submeshKeypath.submeshID]);
-
+//    constant InstanceData *instancesArray = (constant InstanceData*)pScene->instances;
+//  uint32_t meshIndex = instancesArray[submeshKeypath.instanceID].meshIndex;
+//  constant MeshData* meshesArray = (constant MeshData*)pScene->meshes;
+//  constant MeshData& mesh = meshesArray[meshIndex];
+//  constant SubmeshData* submeshesArray = (constant SubmeshData*) mesh.submeshes;
+//  constant SubmeshData& submesh = submeshesArray[submeshKeypath.submeshID];
+    constant MeshData* pMesh = &(pScene->meshes[ pScene->instances[submeshKeypath.instanceID].meshIndex]);
+    constant SubmeshData* pSubmesh = &(pMesh->submeshes[submeshKeypath.submeshID]);
+  
+  SubmeshData submesh = *pSubmesh;
+  
     LightingParameters params = calculateParameters(in,
                                                     cameraData,
                                                     lightData,

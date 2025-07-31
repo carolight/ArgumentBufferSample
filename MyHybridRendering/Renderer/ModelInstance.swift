@@ -16,7 +16,7 @@ struct ModelInstance {
     let modelInstances: [ModelInstance] = [
       ModelInstance(
         meshIndex: 0,
-        position: [20, 5, 40],
+        position: [20, -5, -40],
         rotation: 135 * .pi / 180),
       ModelInstance(
         meshIndex: 0,

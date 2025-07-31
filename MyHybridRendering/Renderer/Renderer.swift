@@ -6,6 +6,7 @@
 //
 
 import MetalKit
+import MetalPerformanceShaders
 
 let kMaxBuffersInFlight = 3
 let kMaxModelInstances = 4
@@ -63,8 +64,6 @@ class Renderer: NSObject {
   var sceneResidencySet: MTLResidencySet!
   var sceneResources: [MTLResource] = []
   var sceneHeaps: [MTLHeap] = []
-  
-  var instanceArgumentBuffer: MTLBuffer!
   
   init(view: MTKView) {
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -130,6 +129,8 @@ class Renderer: NSObject {
         .assumingMemoryBound(to: InstanceTransform.self)
       transforms.pointee.modelViewMatrix = calculateTransform(instance: modelInstances[index])
     }
+    
+    
     
     updateCameraState()
     
@@ -216,7 +217,7 @@ class Renderer: NSObject {
   
   func buildSceneArgumentsBuffer() {
     let instanceArgumentSize = MemoryLayout<InstanceData>.stride * kMaxModelInstances
-    instanceArgumentBuffer = newBuffer(
+    let instanceArgumentBuffer = newBuffer(
       label: "instanceArgumentBuffer",
       length: instanceArgumentSize,
       options: .storageModeShared)
@@ -227,7 +228,7 @@ class Renderer: NSObject {
     for index in 0..<kMaxModelInstances {
       instancePtr.pointee.meshIndex = UInt32(modelInstances[index].meshIndex)
       instancePtr.pointee.transform = calculateTransform(instance: modelInstances[index])
-      instancePtr = instancePtr.successor()
+      instancePtr = instancePtr.advanced(by: 1)
     }
     
     let meshArgumentSize = MemoryLayout<MeshData>.stride * meshes.count
@@ -236,7 +237,7 @@ class Renderer: NSObject {
       length: meshArgumentSize,
       options: .storageModeShared)
     
-    let meshPtr = meshArgumentbuffer.contents()
+    var meshPtr = meshArgumentbuffer.contents()
       .assumingMemoryBound(to: MeshData.self)
     for index in 0..<meshes.count {
       let mesh = meshes[index]
@@ -259,7 +260,7 @@ class Renderer: NSObject {
       
       let submeshArgumentSize = MemoryLayout<SubmeshData>.stride * mesh.submeshes.count
       let submeshArgumentBuffer = newBuffer(
-        label: "submeshArgumentBuffer",
+        label: "submeshArgumentBuffer mesh count: \(index)",
         length: submeshArgumentSize,
         options: .storageModeShared)
       
@@ -272,20 +273,21 @@ class Renderer: NSObject {
         offset = UInt64(indexBuffer.offset)
         submeshPtr.pointee.indices = indexBuffer.buffer.gpuAddress + offset
         
-        for (index, texture) in submesh.textures.enumerated() {
-          // SubmeshData.textures is a tuple
-          withUnsafeMutableBytes(of: &submeshPtr.pointee.materials) { bytes in
-            bytes.bindMemory(to: MTLResourceID.self)[index] = texture.gpuResourceID
-          }
-        }
-        
+        submeshPtr.pointee.materials.0 = submesh.textures[0].gpuResourceID
+        submeshPtr.pointee.materials.1 = submesh.textures[1].gpuResourceID
+        submeshPtr.pointee.materials.2 = submesh.textures[2].gpuResourceID
+        submeshPtr.pointee.materials.3 = submesh.textures[3].gpuResourceID
+        submeshPtr.pointee.materials.4 = submesh.textures[4].gpuResourceID
+
         let submeshIndexBuffer = submesh.mtkSubmesh.indexBuffer.buffer
         sceneResources.append(submeshIndexBuffer)
         sceneResources += submesh.textures
-        submeshPtr = submeshPtr.successor()
+        
+        submeshPtr = submeshPtr.advanced(by: 1)
+        
       }
-      
       meshPtr.pointee.submeshes = submeshArgumentBuffer.gpuAddress
+      meshPtr = meshPtr.advanced(by: 1)
     }
     sceneResources.append(meshArgumentbuffer)
     
@@ -366,8 +368,8 @@ extension Renderer: MTKViewDelegate {
   }
   
   func encodeSceneRendering(_ renderEncoder: MTLRenderCommandEncoder) {
-    for index in 0..<kMaxModelInstances {
-      let mesh = meshes[modelInstances[index].meshIndex]
+    for meshIndex in 0..<kMaxModelInstances {
+      let mesh = meshes[modelInstances[meshIndex].meshIndex]
       let mtkMesh = mesh.mtkMesh
       
       // set the mesh's vertex buffers
@@ -390,12 +392,12 @@ extension Renderer: MTKViewDelegate {
         // argument buffer using this key to find the textures
         
         var submeshKeypath = SubmeshKeypath(
-          instanceID: UInt32(index),
+          instanceID: UInt32(meshIndex),
           submeshID: UInt32(submeshIndex))
         let mtkSubmesh = submesh.mtkSubmesh
         renderEncoder.setVertexBuffer(
           instanceTransformBuffer,
-          offset: alignedInstanceTransformSize,
+          offset: alignedInstanceTransformSize * meshIndex,
           index: BufferIndexInstanceTransforms.index)
         renderEncoder.setVertexBuffer(
           cameraDataBuffers[cameraBufferIndex],
@@ -491,7 +493,53 @@ extension Renderer: MTKViewDelegate {
     }
     renderEncoder.endEncoding()
     commandBuffer.popDebugGroup()
-   
+    
+    // Clamp values to the bloom threshold
+    commandBuffer.pushDebugGroup("Bloom Threshold")
+    let bloomRpd = MTLRenderPassDescriptor()
+    bloomRpd.colorAttachments[0].loadAction = .dontCare
+    bloomRpd.colorAttachments[0].storeAction = .store
+    bloomRpd.colorAttachments[0].texture = bloomThresholdMap
+    
+    guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: bloomRpd) else { return }
+    renderEncoder.pushDebugGroup("BloomThreshold")
+    renderEncoder.setRenderPipelineState(bloomThresholdPipeline)
+    renderEncoder.setFragmentTexture(rawColorMap, index: 0)
+    
+    var threshold: Float = 2.0
+    renderEncoder.setFragmentBytes(&threshold, length: MemoryLayout<Float>.stride, index: 0)
+    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 6)
+    renderEncoder.popDebugGroup()
+    renderEncoder.endEncoding()
+    commandBuffer.popDebugGroup()
+    
+    // Blur the bloom
+    commandBuffer.pushDebugGroup("Bloom Blur")
+    let blur = MPSImageGaussianBlur(device: device, sigma: 5.0)
+    blur.encode(
+      commandBuffer: commandBuffer,
+      sourceTexture: bloomThresholdMap!,
+      destinationTexture: bloomBlurMap!)
+    commandBuffer.popDebugGroup()
+    
+    // Merge the post processing results with the scene rendering
+    commandBuffer.pushDebugGroup("Final Merge")
+    let postRpd = MTLRenderPassDescriptor()
+    postRpd.colorAttachments[0].loadAction = .dontCare
+    postRpd.colorAttachments[0].storeAction = .store
+    postRpd.colorAttachments[0].texture = drawableTexture
+    
+    guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: postRpd) else { return }
+    renderEncoder.pushDebugGroup("Postprocessing Merge")
+    renderEncoder.setRenderPipelineState(postMergePipeline)
+    renderEncoder.setFragmentBytes(&exposure, length: MemoryLayout<Float>.stride, index: 0)
+    renderEncoder.setFragmentTexture(rawColorMap, index: 0)
+    renderEncoder.setFragmentTexture(bloomBlurMap, index: 1)
+    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 6)
+    renderEncoder.popDebugGroup()
+    renderEncoder.endEncoding()
+    commandBuffer.popDebugGroup()
+                                   
     if let drawable = view.currentDrawable {
       commandBuffer.present(drawable)
     }
