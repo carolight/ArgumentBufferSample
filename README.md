@@ -6,6 +6,6 @@ You can download Apple sample code from: https://developer.apple.com/documentati
 
 
 I have converted the project to Swift and Xcode 26.
-I have removed all ray tracing, as I was just interested in the instancing and argument buffers.
+I have removed all ray tracing and post processing, as I was just interested in the instancing and argument buffers.
 
 

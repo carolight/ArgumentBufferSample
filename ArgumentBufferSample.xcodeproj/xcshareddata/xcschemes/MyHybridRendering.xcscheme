@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "820299C52E398CE700948F00"
-               BuildableName = "MyHybridRendering.app"
-               BlueprintName = "MyHybridRendering"
-               ReferencedContainer = "container:MyHybridRendering.xcodeproj">
+               BuildableName = "ArgumentBufferSample.app"
+               BlueprintName = "ArgumentBufferSample"
+               ReferencedContainer = "container:ArgumentBufferSample.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "820299C52E398CE700948F00"
-            BuildableName = "MyHybridRendering.app"
-            BlueprintName = "MyHybridRendering"
-            ReferencedContainer = "container:MyHybridRendering.xcodeproj">
+            BuildableName = "ArgumentBufferSample.app"
+            BlueprintName = "ArgumentBufferSample"
+            ReferencedContainer = "container:ArgumentBufferSample.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "820299C52E398CE700948F00"
-            BuildableName = "MyHybridRendering.app"
-            BlueprintName = "MyHybridRendering"
-            ReferencedContainer = "container:MyHybridRendering.xcodeproj">
+            BuildableName = "ArgumentBufferSample.app"
+            BlueprintName = "ArgumentBufferSample"
+            ReferencedContainer = "container:ArgumentBufferSample.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

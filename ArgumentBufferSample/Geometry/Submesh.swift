@@ -1,6 +1,6 @@
 //
 //  Submesh.swift
-//  MyHybridRendering
+//  ArgumentBufferSample
 //
 //  Created by Caroline on 30/7/2025.
 //
