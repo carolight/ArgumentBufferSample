@@ -11,11 +11,7 @@ struct RendererComponents {
   let mtlVertexDescriptor: MTLVertexDescriptor
   let mtlSkyboxVertexDescriptor: MTLVertexDescriptor
   let pipelineState: MTLRenderPipelineState
-  let gBufferPipelineState: MTLRenderPipelineState
   let skyboxPipelineState: MTLRenderPipelineState
-  let rtMipmapPipeline: MTLRenderPipelineState
-  let bloomThresholdPipeline: MTLRenderPipelineState
-  let postMergePipeline: MTLRenderPipelineState
   let depthState: MTLDepthStencilState
   let cameraDataBuffers: [MTLBuffer]
   let instanceTransformBuffer: MTLBuffer
@@ -37,13 +33,11 @@ class RendererBuilder {
     }
     let mtlVertexDescriptor = build_mtlVertexDescriptor()
     let mtlSkyboxVertexDescriptor = build_mtlSkyboxVertexDescriptor()
-    let (pipelineState, gBufferPipelineState, skyboxPipelineState) =
+    let (pipelineState, skyboxPipelineState) =
     build_pipelineStates(
       library: library,
       mtlVertexDescriptor: mtlVertexDescriptor,
       mtlSkyboxVertexDescriptor: mtlSkyboxVertexDescriptor)
-    let (rtMipmapPipeline, bloomThresholdPipeline, postMergePipeline) =
-    build_passthroughPipelines(library: library)
     let depthState = build_depthStencilState()
     let cameraDataBuffers = build_cameraDataBuffers()
     let instanceTransformBuffer = build_instanceTransformBuffer()
@@ -53,11 +47,7 @@ class RendererBuilder {
       mtlVertexDescriptor: mtlVertexDescriptor,
       mtlSkyboxVertexDescriptor: mtlSkyboxVertexDescriptor,
       pipelineState: pipelineState,
-      gBufferPipelineState: gBufferPipelineState,
       skyboxPipelineState: skyboxPipelineState,
-      rtMipmapPipeline: rtMipmapPipeline,
-      bloomThresholdPipeline: bloomThresholdPipeline,
-      postMergePipeline: postMergePipeline,
       depthState: depthState,
       cameraDataBuffers: cameraDataBuffers,
       instanceTransformBuffer: instanceTransformBuffer,
@@ -135,10 +125,8 @@ class RendererBuilder {
     mtlSkyboxVertexDescriptor: MTLVertexDescriptor
   ) ->
   (pipelineState: MTLRenderPipelineState,
-   gBufferPipelineState: MTLRenderPipelineState,
    skyboxPipelineState: MTLRenderPipelineState) {
     let pipelineState: MTLRenderPipelineState
-    let gBufferPipelineState: MTLRenderPipelineState
     let skyboxPipelineState: MTLRenderPipelineState
     
     // PipelineState
@@ -152,7 +140,7 @@ class RendererBuilder {
     pipelineStateDescriptor.vertexFunction = vertexFunction
     pipelineStateDescriptor.fragmentFunction = fragmentFunction
     pipelineStateDescriptor.vertexDescriptor = mtlVertexDescriptor
-    pipelineStateDescriptor.colorAttachments[0].pixelFormat = .rg11b10Float
+    pipelineStateDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
     pipelineStateDescriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
     pipelineStateDescriptor.stencilAttachmentPixelFormat = view.depthStencilPixelFormat
     
@@ -160,21 +148,6 @@ class RendererBuilder {
       pipelineState = try device.makeRenderPipelineState(descriptor: pipelineStateDescriptor)
     } catch {
       fatalError("Pipeline State not created")
-    }
-    
-    // gBufferPipelineState
-    guard let fragmentFunction = library.makeFunction(name: "gBufferFragmentShader") else {
-      fatalError("Could not load shader functions from library.")
-    }
-    pipelineStateDescriptor.label = "ThinGBufferPipeline"
-    pipelineStateDescriptor.fragmentFunction = fragmentFunction
-    pipelineStateDescriptor.colorAttachments[0].pixelFormat = .rgba16Float
-    pipelineStateDescriptor.colorAttachments[1].pixelFormat = .rgba16Float
-    
-    do {
-      gBufferPipelineState = try device.makeRenderPipelineState(descriptor: pipelineStateDescriptor)
-    } catch {
-      fatalError("GBuffer Pipeline State not created")
     }
     
     // skyboxPipelineState
@@ -186,7 +159,8 @@ class RendererBuilder {
     pipelineStateDescriptor.vertexDescriptor = mtlSkyboxVertexDescriptor
     pipelineStateDescriptor.vertexFunction = vertexFunction
     pipelineStateDescriptor.fragmentFunction = fragmentFunction
-    pipelineStateDescriptor.colorAttachments[0].pixelFormat = .rg11b10Float
+    pipelineStateDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+
     pipelineStateDescriptor.colorAttachments[1].pixelFormat = .invalid
     
     do {
@@ -194,59 +168,10 @@ class RendererBuilder {
     } catch {
       fatalError("Skybox Pipeline State not created")
     }
-    return (pipelineState, gBufferPipelineState, skyboxPipelineState)
+    return (pipelineState, skyboxPipelineState)
   }
   
-  func build_passthroughPipelines(library: MTLLibrary) ->
-  (rtMipmapPipeline: MTLRenderPipelineState,
-   bloomThresholdPipeline: MTLRenderPipelineState,
-   postMergePipeline: MTLRenderPipelineState) {
-     let rtMipmapPipeline: MTLRenderPipelineState
-     let bloomThresholdPipeline: MTLRenderPipelineState
-     let postMergePipeline: MTLRenderPipelineState
-
-    let passthroughDesc = MTLRenderPipelineDescriptor()
-
-    // rtMipmapPipeline
-    guard let passthroughVertex = library.makeFunction(name: "vertexPassthrough"),
-          let fragmentfunction = library.makeFunction(name: "fragmentPassthrough") else {
-            fatalError("Failed to find pass through shader functions")
-          }
-    passthroughDesc.vertexFunction = passthroughVertex
-    passthroughDesc.fragmentFunction = fragmentfunction
-    passthroughDesc.colorAttachments[0].pixelFormat = .rg11b10Float
-    do {
-      rtMipmapPipeline = try device.makeRenderPipelineState(descriptor: passthroughDesc)
-    } catch {
-      fatalError("Failed to create rtMipmapPipeline")
-    }
-
-    // bloomThresholdPipeline
-    guard let fragmentfunction = library.makeFunction(name: "fragmentBloomThreshold") else {
-      fatalError("Failed to create bloom threshold shader function")
-    }
-    passthroughDesc.fragmentFunction = fragmentfunction
-    passthroughDesc.colorAttachments[0].pixelFormat = .rg11b10Float
-    do {
-      bloomThresholdPipeline = try device.makeRenderPipelineState(descriptor: passthroughDesc)
-    } catch {
-      fatalError("Failed to create bloom threshold pipeline")
-    }
-
-    // fragmentPostProcessMerge
-    guard let fragmentfunction = library.makeFunction(name: "fragmentPostprocessMerge") else {
-      fatalError("Failed to create postprocessing merge pass")
-    }
-    passthroughDesc.fragmentFunction = fragmentfunction
-    passthroughDesc.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
-    do {
-      postMergePipeline = try device.makeRenderPipelineState(descriptor: passthroughDesc)
-    } catch {
-      fatalError("Failed to create postMergePipeline")
-    }
-    return (rtMipmapPipeline, bloomThresholdPipeline, postMergePipeline)
-  }
-  
+ 
   func build_depthStencilState() -> MTLDepthStencilState {
     let depthDescriptor = MTLDepthStencilDescriptor()
     depthDescriptor.depthCompareFunction = .less

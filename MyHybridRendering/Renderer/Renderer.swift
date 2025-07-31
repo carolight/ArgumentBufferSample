@@ -12,11 +12,6 @@ let kMaxBuffersInFlight = 3
 let kMaxModelInstances = 4
 let alignedInstanceTransformSize = (MemoryLayout<InstanceTransform>.size & ~0xFF) + 0x100
 
-struct ThinGBuffer {
-  let positionTexture: MTLTexture
-  let directionTexture: MTLTexture
-}
-
 class Renderer: NSObject {
   let device: MTLDevice
   let commandQueue: MTLCommandQueue
@@ -25,20 +20,12 @@ class Renderer: NSObject {
   let mtlVertexDescriptor: MTLVertexDescriptor
   let mtlSkyboxVertexDescriptor: MTLVertexDescriptor
   let pipelineState: MTLRenderPipelineState
-  let gBufferPipelineState: MTLRenderPipelineState
   let skyboxPipelineState: MTLRenderPipelineState
-  let rtMipmapPipeline: MTLRenderPipelineState
-  let bloomThresholdPipeline: MTLRenderPipelineState
-  let postMergePipeline: MTLRenderPipelineState
   let depthState: MTLDepthStencilState
   let cameraDataBuffers: [MTLBuffer]
   let instanceTransformBuffer: MTLBuffer
   let lightDataBuffer: MTLBuffer
   
-  var rawColorMap: MTLTexture?
-  var bloomThresholdMap: MTLTexture?
-  var bloomBlurMap: MTLTexture?
-
   var projectionMatrix: matrix_float4x4 = .identity
   let inFlightSemaphore = DispatchSemaphore(value: kMaxBuffersInFlight)
   var cameraBufferIndex = 0
@@ -50,7 +37,6 @@ class Renderer: NSObject {
   var cameraPanSpeedFactor: Float = 0
   var metallicBias: Float = 0
   var roughnessBias: Float = 0
-  var exposure: Float = 0
   
   let modelInstances: [ModelInstance]
   
@@ -58,8 +44,6 @@ class Renderer: NSObject {
   var skybox: Mesh!
   var skyMap: MTLTexture!
   
-  var thinGBuffer: ThinGBuffer?
-
   var sceneArgumentBuffer: MTLBuffer!
   var sceneResidencySet: MTLResidencySet!
   var sceneResources: [MTLResource] = []
@@ -82,11 +66,11 @@ class Renderer: NSObject {
     mtlVertexDescriptor = components.mtlVertexDescriptor
     mtlSkyboxVertexDescriptor = components.mtlSkyboxVertexDescriptor
     pipelineState = components.pipelineState
-    gBufferPipelineState = components.gBufferPipelineState
+//    gBufferPipelineState = components.gBufferPipelineState
     skyboxPipelineState = components.skyboxPipelineState
-    rtMipmapPipeline = components.rtMipmapPipeline
-    bloomThresholdPipeline = components.bloomThresholdPipeline
-    postMergePipeline = components.postMergePipeline
+//    rtMipmapPipeline = components.rtMipmapPipeline
+//    bloomThresholdPipeline = components.bloomThresholdPipeline
+//    postMergePipeline = components.postMergePipeline
     depthState = components.depthState
     cameraDataBuffers = components.cameraDataBuffers
     instanceTransformBuffer = components.instanceTransformBuffer
@@ -106,7 +90,6 @@ class Renderer: NSObject {
     cameraPanSpeedFactor = 0.5
     metallicBias = 0.0
     roughnessBias = 0.0
-    exposure = 1.0
     
     mtkView(view, drawableSizeWillChange: view.drawableSize)
     setStaticState()
@@ -117,7 +100,7 @@ class Renderer: NSObject {
     view.depthStencilPixelFormat = .depth32Float_stencil8
     view.colorPixelFormat = .bgra8Unorm_srgb
     view.clearColor = MTLClearColor(red: 0.65, green: 0.65, blue: 0.65, alpha: 1)
-    view.preferredFramesPerSecond = 30
+    view.preferredFramesPerSecond = 60
     view.delegate = self
   }
   
@@ -343,28 +326,6 @@ class Renderer: NSObject {
 extension Renderer: MTKViewDelegate {
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
     projectionMatrix = projectionMatrix(aspect: Float(size.width / size.height))
-    
-    guard size != .zero else { return }
-    let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-      pixelFormat: .rg11b10Float,
-      width: Int(size.width),
-      height: Int(size.height),
-      mipmapped: true)
-    textureDescriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
-    textureDescriptor.mipmapLevelCount = 1
-    rawColorMap = device.makeTexture(descriptor: textureDescriptor)
-    bloomThresholdMap = device.makeTexture(descriptor: textureDescriptor)
-    bloomBlurMap = device.makeTexture(descriptor: textureDescriptor)
-    
-    textureDescriptor.pixelFormat = .rgba16Float
-    textureDescriptor.usage = [.shaderRead, .renderTarget]
-    textureDescriptor.mipmapLevelCount = 1
-    
-    let positionTexture = device.makeTexture(descriptor: textureDescriptor)!
-    let directionTexture = device.makeTexture(descriptor: textureDescriptor)!
-    thinGBuffer = ThinGBuffer(
-      positionTexture: positionTexture,
-      directionTexture: directionTexture)
   }
   
   func encodeSceneRendering(_ renderEncoder: MTLRenderCommandEncoder) {
@@ -416,7 +377,7 @@ extension Renderer: MTKViewDelegate {
         renderEncoder.setFragmentBuffer(
           sceneArgumentBuffer,
           offset: 0,
-          index: Int(SceneIndex.rawValue))
+          index: Int(BufferIndexScene.rawValue))
         renderEncoder.setFragmentBytes(
           &submeshKeypath,
           length: MemoryLayout<SubmeshKeypath>.stride,
@@ -447,11 +408,8 @@ extension Renderer: MTKViewDelegate {
     updateCameraState()
     
     // Encode the forward pass
-    renderPassDescriptor.colorAttachments[0].texture = rawColorMap
-    
-    commandBuffer.pushDebugGroup("Forward Scene Render")
-//    commandBuffer.useResidencySet(sceneResidencySet)
-    
+    renderPassDescriptor.colorAttachments[0].texture = drawableTexture
+
     guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else { return }
     renderEncoder.label = "ForwardPassRenderEncoder"
     renderEncoder.setRenderPipelineState(pipelineState)
@@ -492,54 +450,7 @@ extension Renderer: MTKViewDelegate {
         indexBufferOffset: submesh.indexBuffer.offset)
     }
     renderEncoder.endEncoding()
-    commandBuffer.popDebugGroup()
-    
-    // Clamp values to the bloom threshold
-    commandBuffer.pushDebugGroup("Bloom Threshold")
-    let bloomRpd = MTLRenderPassDescriptor()
-    bloomRpd.colorAttachments[0].loadAction = .dontCare
-    bloomRpd.colorAttachments[0].storeAction = .store
-    bloomRpd.colorAttachments[0].texture = bloomThresholdMap
-    
-    guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: bloomRpd) else { return }
-    renderEncoder.pushDebugGroup("BloomThreshold")
-    renderEncoder.setRenderPipelineState(bloomThresholdPipeline)
-    renderEncoder.setFragmentTexture(rawColorMap, index: 0)
-    
-    var threshold: Float = 2.0
-    renderEncoder.setFragmentBytes(&threshold, length: MemoryLayout<Float>.stride, index: 0)
-    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 6)
-    renderEncoder.popDebugGroup()
-    renderEncoder.endEncoding()
-    commandBuffer.popDebugGroup()
-    
-    // Blur the bloom
-    commandBuffer.pushDebugGroup("Bloom Blur")
-    let blur = MPSImageGaussianBlur(device: device, sigma: 5.0)
-    blur.encode(
-      commandBuffer: commandBuffer,
-      sourceTexture: bloomThresholdMap!,
-      destinationTexture: bloomBlurMap!)
-    commandBuffer.popDebugGroup()
-    
-    // Merge the post processing results with the scene rendering
-    commandBuffer.pushDebugGroup("Final Merge")
-    let postRpd = MTLRenderPassDescriptor()
-    postRpd.colorAttachments[0].loadAction = .dontCare
-    postRpd.colorAttachments[0].storeAction = .store
-    postRpd.colorAttachments[0].texture = drawableTexture
-    
-    guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: postRpd) else { return }
-    renderEncoder.pushDebugGroup("Postprocessing Merge")
-    renderEncoder.setRenderPipelineState(postMergePipeline)
-    renderEncoder.setFragmentBytes(&exposure, length: MemoryLayout<Float>.stride, index: 0)
-    renderEncoder.setFragmentTexture(rawColorMap, index: 0)
-    renderEncoder.setFragmentTexture(bloomBlurMap, index: 1)
-    renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 6)
-    renderEncoder.popDebugGroup()
-    renderEncoder.endEncoding()
-    commandBuffer.popDebugGroup()
-                                   
+
     if let drawable = view.currentDrawable {
       commandBuffer.present(drawable)
     }

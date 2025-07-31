@@ -15,9 +15,7 @@ typedef enum {
   NormalTexture = 3,
   AOTexture = 4,
   MaterialTextureCount = AOTexture + 1,
-  IrradianceMap = 5,
-  Reflections = 6,
-  SkyDomeTexture = 7
+  SkyDomeTexture = 6
 } TextureIndices;
 
 typedef enum {

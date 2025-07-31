@@ -25,11 +25,10 @@ typedef enum {
   BufferIndexInstanceTransforms   = 2,
   BufferIndexCameraData           = 3,
   BufferIndexLightData            = 4,
-  BufferIndexSubmeshKeypath       = 5
-
+  BufferIndexSubmeshKeypath       = 5,
+  BufferIndexScene                = 11
+  
 } BufferIndices;
-
-
 
 typedef struct {
   matrix_float4x4 projectionMatrix;
@@ -51,14 +50,8 @@ typedef struct {
 
 typedef struct SubmeshKeypath
 {
-    uint32_t instanceID;
-    uint32_t submeshID;
+  uint32_t instanceID;
+  uint32_t submeshID;
 } SubmeshKeypath;
-
-typedef enum RTReflectionKernelBufferIndex
-{
-    SceneIndex                      = 0,
-    AccelerationStructureIndex      = 1
-} RTReflectionKernelBufferIndex;
 
 #endif /* Common_h */
